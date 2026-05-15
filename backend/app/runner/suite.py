@@ -7,21 +7,19 @@ from typing import Any, Callable, Dict, Optional
 
 from playwright.sync_api import sync_playwright, Page
 
-logger = logging.getLogger(__name__)
-
 from app.config import ARTIFACTS_DIR, DEFAULT_TIMEOUT_MS, HEADLESS
 from app.services.artifacts import save_artifacts
 from app.services.store import get_run, set_run
 
-# Import feature runners (adjust names if your functions differ)
 from app.runner.features.aiops import run_aiops
 from app.runner.features.finops import run_finops
 from app.runner.features.inventory import run_inventory
 from app.runner.features.log_analytics import run_log_analytics
 from app.runner.features.os_management import run_os_management
 
-# Optional helpers (adjust if your helpers.py has different names)
 from app.runner.helpers import login, select_workspace
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> str:
@@ -54,10 +52,7 @@ def _update_feature(run_id: str, feature: str, patch: Dict[str, Any]) -> None:
         return
     for fr in data.get("features", []):
         if fr.get("feature") == feature:
-            old_status = fr.get("status")
             fr.update(patch)
-            new_status = fr.get("status")
-            logger.info(f"[SUITE] Updated feature {feature}: {old_status} -> {new_status}")
             break
     _save_run(run_id, data)
 
@@ -70,20 +65,13 @@ def _artifact_dir(run_id: str, feature: str) -> Path:
 
 
 def run_e2e_suite(run_id: str, run_request: dict) -> None:
-    """
-    run_request comes from RunE2ERequest.model_dump():
-      {
-        "base_url": "...",
-        "credentials": {"email": "...", "password": "...", "mfa_code": "...?"},
-        "workspace": {"business": "...", "environment": "...", "cloud_provider": "...", "account": "..."}
-      }
-    """
     logger.info(f"[SUITE] Starting E2E suite for run {run_id}")
+
     base_url = run_request.get("base_url")
     credentials = run_request.get("credentials", {})
     workspace = run_request.get("workspace", {})
 
-    feature_plan: list[tuple[str, Callable[[Page], None]]] = [
+    feature_plan: list[tuple[str, Callable[[Page, Path], None]]] = [
         ("aiops", run_aiops),
         ("finops_cost_analytics", run_finops),
         ("inventory_management", run_inventory),
@@ -92,7 +80,6 @@ def run_e2e_suite(run_id: str, run_request: dict) -> None:
     ]
 
     _set_state(run_id, "running", current_feature=None)
-    logger.info(f"[SUITE] Launching browser for run {run_id}")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=HEADLESS)
@@ -101,7 +88,6 @@ def run_e2e_suite(run_id: str, run_request: dict) -> None:
         page.set_default_timeout(DEFAULT_TIMEOUT_MS)
 
         try:
-            # 1) Login once
             logger.info(f"[SUITE] Logging in for run {run_id}")
             login(
                 page=page,
@@ -111,7 +97,7 @@ def run_e2e_suite(run_id: str, run_request: dict) -> None:
                 mfa_code=credentials.get("mfa_code"),
             )
 
-            # 2) Select workspace once
+            logger.info(f"[SUITE] Selecting workspace for run {run_id}")
             select_workspace(
                 page=page,
                 business=workspace.get("business"),
@@ -120,7 +106,6 @@ def run_e2e_suite(run_id: str, run_request: dict) -> None:
                 account=workspace.get("account"),
             )
 
-            # 3) Run features
             for feature_name, fn in feature_plan:
                 logger.info(f"[SUITE] Starting feature {feature_name} for run {run_id}")
                 _set_state(run_id, "running", current_feature=feature_name)
@@ -130,9 +115,11 @@ def run_e2e_suite(run_id: str, run_request: dict) -> None:
                     {"status": "running", "started_at": _utc_now(), "message": ""},
                 )
 
+                out_dir = _artifact_dir(run_id, feature_name)
+
                 try:
                     logger.info(f"[SUITE] Executing feature {feature_name}")
-                    fn(page)
+                    fn(page, out_dir)
 
                     logger.info(f"[SUITE] Feature {feature_name} PASSED for run {run_id}")
                     _update_feature(
@@ -140,11 +127,12 @@ def run_e2e_suite(run_id: str, run_request: dict) -> None:
                         feature_name,
                         {"status": "passed", "finished_at": _utc_now()},
                     )
+
                 except Exception as e:
                     logger.error(f"[SUITE] Feature {feature_name} FAILED for run {run_id}: {str(e)}", exc_info=True)
-                    # Save artifacts (screenshot/html) + mark failed
-                    out_dir = _artifact_dir(run_id, feature_name)
-                    artifacts = save_artifacts(page=page, out_dir=out_dir)
+
+                    # Optional: boundary capture (micro-step capture will already have happened)
+                    artifacts = save_artifacts(page=page, out_dir=out_dir, label="feature_failed_boundary")
 
                     _update_feature(
                         run_id,
@@ -163,10 +151,10 @@ def run_e2e_suite(run_id: str, run_request: dict) -> None:
         except Exception as e:
             logger.error(f"[SUITE] Suite failed for run {run_id}: {str(e)}", exc_info=True)
             _set_state(run_id, "failed", current_feature=None)
-            # Save artifacts for overall failure
+
             out_dir = _artifact_dir(run_id, "suite_failure")
-            artifacts = save_artifacts(page=page, out_dir=out_dir)
-            # Update a dummy feature or add to run data
+            artifacts = save_artifacts(page=page, out_dir=out_dir, label="suite_failed")
+
             data = _load_run(run_id)
             if data:
                 data["error_message"] = str(e)
@@ -176,8 +164,14 @@ def run_e2e_suite(run_id: str, run_request: dict) -> None:
 
         finally:
             logger.info(f"[SUITE] Closing browser for run {run_id}")
-            context.close()
-            browser.close()
+            try:
+                context.close()
+            except Exception:
+                pass
+            try:
+                browser.close()
+            except Exception:
+                pass
 
     data = _load_run(run_id)
     if data:

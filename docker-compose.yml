@@ -16,23 +16,69 @@ services:
 volumes:
   redis_data:
 
-# To run the backend and worker:
-#
-# Terminal 1 - Redis (already running via docker-compose up -d):
-#   docker-compose up -d
-#
-# Terminal 2 - FastAPI backend:
-#   cd backend
-#   set REDIS_URL=redis://localhost:6379/0
-#   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-#
-# Terminal 3 - Celery worker:
-#   cd backend
-#   set REDIS_URL=redis://localhost:6379/0
-#   celery -A app.worker.celery_app worker --loglevel=info
-#
-# Terminal 4 - Next.js frontend:
-#   cd frontend
-#   npm run dev
-#
-# Then visit: http://localhost:3000
+# # To run the backend and worker:
+# #
+# # Terminal 1 - Redis (already running via docker-compose up -d):
+# #   docker-compose up -d
+# #
+# # Terminal 2 - FastAPI backend:
+# #   cd backend
+# #   set REDIS_URL=redis://localhost:6379/0
+# #   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# #
+# # Terminal 3 - Celery worker:
+# #   cd backend
+# #   set REDIS_URL=redis://localhost:6379/0
+# #   celery -A app.worker.celery_app worker --loglevel=info
+# #
+# # Terminal 4 - Next.js frontend:
+# #   cd frontend
+# #   npm run dev
+# #
+# # Then visit: http://localhost:3000
+
+
+#services:
+#  redis:
+#    image: redis:7-alpine
+ #   ports:
+  #    - "6379:6379"
+   # volumes:
+    #  - redis_data:/data
+
+ # backend:
+   # build:
+    #  context: .
+     # dockerfile: Dockerfile
+    #ports:
+     # - "8000:8000"
+    #environment:
+     # REDIS_URL: redis://redis:6379/0
+      #HEADLESS: "true"   # 👈 IMPORTANT
+    #depends_on:
+     # - redis
+    #volumes:
+     # - ./backend:/app
+     # - ./artifacts:/app/artifacts
+   # command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  #worker:
+   # image: mcr.microsoft.com/playwright/python:v1.49.0-jammy
+    #working_dir: /app
+    #environment:
+      #REDIS_URL: redis://redis:6379/0
+      #HEADLESS: "true"   # 👈 IMPORTANT
+   # depends_on:
+    #  - redis
+   # volumes:
+    #  - ./backend:/app
+     # - ./artifacts:/app/artifacts
+   # command: >
+    #  bash -lc "
+     #   pip install -r requirements.txt &&
+      #  playwright install chromium &&
+      #  celery -A app.worker.celery_app worker --loglevel=info
+   #   "
+
+#volumes:
+ # redis_data:

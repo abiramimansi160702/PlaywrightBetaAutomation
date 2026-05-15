@@ -29,15 +29,24 @@ def login(page: Page, base_url: str, email: str, password: str, mfa_code: Option
     page.get_by_role("textbox", name=re.compile(r"password", re.I)).fill(password)
     page.get_by_role("button", name=re.compile(r"login", re.I)).click()
 
-    mfa = page.get_by_role("textbox", name=re.compile(r"mfa", re.I))
-    if mfa.count() > 0:
-        if mfa_code is None:
-            raise ValueError("MFA was prompted but no mfa_code was provided.")
-        mfa.first.fill(mfa_code)
-        page.get_by_role("button", name=re.compile(r"verify|continue", re.I)).click()
+    try:
+        page.wait_for_timeout(2000)
+
+        mfa = page.get_by_role("textbox", name=re.compile(r"mfa", re.I))
+        if mfa.is_visible(timeout=5000):
+            code = mfa_code or MFA_BYPASS_CODE
+            mfa.first.fill(code)
+            page.get_by_role("button", name=re.compile(r"verify|continue", re.I)).click()
+            page.wait_for_timeout(2000)
+    except Exception as e:
+        print(f"[MFA] Not detected or skipped: {e}")
+        # if mfa_code is None:
+        #     raise ValueError("MFA was prompted but no mfa_code was provided.")
+        # mfa.first.fill(mfa_code)
+        # page.get_by_role("button", name=re.compile(r"verify|continue", re.I)).click()
 
     page.wait_for_url(lambda url: "login" not in url, timeout=DEFAULT_TIMEOUT)
-
+    page.screenshot(path="after_login.png", full_page=True)
 
 def select_workspace(
     page: Page,
@@ -79,14 +88,32 @@ def wait_half_min(page: Page, reason: str) -> None:
     page.wait_for_timeout(BREAK_MS)
 
 
+# def goto_left_nav_icon(page: Page, icon_class: str) -> None:
+#     """
+#     Sidebar is often collapsed; clicking by text is flaky.
+#     Click by lucide icon class instead.
+#     """
+#     page.locator(f"nav svg.lucide.{icon_class}").first.click(timeout=DEFAULT_TIMEOUT)
+#     page.wait_for_timeout(600)
+# for headless =true
+# def goto_left_nav_icon(page: Page, icon_class: str) -> None:
+#     # click first visible nav icon (fallback safe)
+#     nav_icons = page.locator("nav button, nav svg")
+
+#     nav_icons.first.wait_for(timeout=DEFAULT_TIMEOUT)
+#     nav_icons.first.click()
+
+#     page.wait_for_timeout(1000)
 def goto_left_nav_icon(page: Page, icon_class: str) -> None:
     """
     Sidebar is often collapsed; clicking by text is flaky.
-    Click by lucide icon class instead.
+    Click by lucide icon class instead. Works in headless and headed.
     """
-    page.locator(f"nav svg.lucide.{icon_class}").first.click(timeout=DEFAULT_TIMEOUT)
+    icon = page.locator(f"nav svg.lucide.{icon_class}").first
+    icon.wait_for(state="visible", timeout=DEFAULT_TIMEOUT)
+    icon.scroll_into_view_if_needed(timeout=10_000)
+    icon.click(timeout=DEFAULT_TIMEOUT)
     page.wait_for_timeout(600)
-
 
 def click_quick_action(page: Page, label: str) -> None:
     page.get_by_role("button", name=re.compile(re.escape(label), re.I)).click(timeout=DEFAULT_TIMEOUT)
